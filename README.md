@@ -14,26 +14,26 @@ integration testing support templates
 | project      | a folder within `bucket`. This allows you to share common items across projects. |
 | spellchecker | The directory where the spell checker lives -- this is where `exclude` lives |
 | temp | The directory where the spell checker puts its files |
-| wordlist | the path for your base dictionary (`english.words.gz` in the Input Files section). |
+| wordlist | the path for your base dictionary (`english.words.txt` in the Input Files section). |
 
-### Input files
+### Input locations
 
 | Path | Description |
 | ------------- | ------------- |
-| `gs://example-bucket/english.words.gz` | *gzipped* word list. Note: It doesn't have to actually be English, although your results may vary. |
+| `gs://example-bucket/english.words.txt` | Dictionary. _Note_: It doesn't have to actually be **English**, although your results may vary. |
 | `gs://example-bucket/project/` | Project specific storage. |
-| `gs://example-bucket/project/excludes` | Perl regular expressions for paths in the repository to ignore. |
-| `gs://example-bucket/project/whitelist` | Sorted list of additional tokens which the repository owner has temporarily deemed acceptable. |
+| `gs://example-bucket/project/excludes.txt` | Perl regular expressions for paths in the repository to ignore. |
+| `gs://example-bucket/project/whitelist.txt` | Sorted list of additional tokens which the repository owner has temporarily deemed acceptable. |
 
 ### Other files
 
 | Name | Description |
 | ------------- | ------------- |
-| `english.words` | the dictionary |
-| `excludes` | file with perl regular expressions (one per line) to exclude files from scanning |
+| `english.words.txt` | Dictionary |
+| `excludes.txt` | File with perl regular expressions (one per line) to exclude files from scanning |
 | `spelling-unknown-word-splitter` | `w` - the word splitter engine itself |
-| `unknown.words` | words that were not in the dictionary |
-| `whitelist.words` | project specific acceptable words |
+| `unknown.words.txt` | Words that were not in the dictionary |
+| `whitelist.words.txt` | Project specific acceptable words |
 
 ### Output
 
@@ -108,7 +108,6 @@ gsutil cp ... gs://...
 * `curl` -- to retrieve `w`
 * `git` (for `git ls-files`) or `hg` -- to list files to check
 * `gsutil` -- For retrieving settings (most of the files defined in [Other Files](README.md#Other Files)
-* `gunzip` (this is just to save storage+transfer cost from the bucket -- you can of course trade off for a bigger file)
 * `perl`
 * [https://raw.githubusercontent.com/jsoref/spelling/master/w](https://raw.githubusercontent.com/jsoref/spelling/master/w) -- as a reminder, if you use this repository as is, you are running code directly from my repository. If that's a problem, you will want to make a local copy of `w` and commit it into your repository.
 * `xargs`

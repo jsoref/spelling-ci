@@ -8,13 +8,13 @@ set -e
 spellchecker='spelling-ci'
 w_location='https://raw.githubusercontent.com/jsoref/spelling/master/w'
 temp='.ci-temp'
-whitelist_path="$spellchecker/whitelist.words"
-excludelist_path="$spellchecker/excludes"
+whitelist_path="$spellchecker/whitelist.words.txt"
+excludelist_path="$spellchecker/excludes.txt"
 dict="$temp/english.words"
 word_splitter="$spellchecker/spelling-unknown-word-splitter.pl"
-run_output="$spellchecker/unknown.words"
+run_output="$spellchecker/unknown.words.txt"
 
-wordlist=$bucket/english.words.gz
+wordlist=$bucket/english.words.txt
 
 if [ -z "$bucket" ]; then
   echo "$0 requires "'$project be set to your bucket (gs://your-project-bucket-path)' >&2
@@ -26,21 +26,17 @@ if [ -z "$project" ]; then
 fi
 
 if [ ! -e "$dict" ]; then
-  mkdir -p $temp
-  echo "Retrieving cached english.words from $wordlist"
+  echo "Retrieving cached $(basename "$wordlist")"
   # english.words is taken from rpm:
   # https://rpmfind.net/linux/fedora/linux/development/rawhide/Everything/aarch64/os/Packages/w/"
   # "words-.*.noarch.rpm"
-  local=$(basename $wordlist)
   (
-    gsutil cp $wordlist $local &&
-    gunzip -c $local > $dict &&
-    rm $local
+    gsutil cp -Z $wordlist "$dict"
   ) >/dev/null 2>/dev/null
 fi
 
 project_file_path() {
-  echo $bucket/$project/$1
+  echo $bucket/$project/$1.txt
 }
 
 get_project_files() {
@@ -49,7 +45,7 @@ get_project_files() {
   if [ ! -e "$dest" ]; then
     from=$(project_file_path $file)
     echo "Retrieving cached $file from $from"
-    gsutil cp $from $dest >/dev/null 2>/dev/null
+    gsutil cp -Z $from $dest >/dev/null 2>/dev/null
   fi
 }
 get_project_files whitelist $whitelist_path
@@ -93,10 +89,10 @@ printDetails() {
 }
 
 to_retrieve_whitelist() {
-  echo gsutil cp $(project_file_path whitelist) whitelist
+  echo gsutil cp -Z $(project_file_path whitelist) whitelist.txt
 }
 to_publish_whitelist() {
-  echo gsutil cp whitelist $(project_file_path whitelist)
+  echo gsutil cp -Z whitelist.txt $(project_file_path whitelist)
 }
 
 if [ -z "$junit" ]; then
@@ -167,7 +163,7 @@ if [ -z "$new_output" ]; then
   title='There are now fewer misspellings than before'
   instructions=$(
     to_retrieve_whitelist
-    echo "patch whitelist <<EOF"
+    echo "patch whitelist.txt <<EOF"
     echo "$diff_output"
     echo "EOF"
     to_publish_whitelist
@@ -189,7 +185,7 @@ fi
 title='New misspellings found, please review'
 instructions=$(
   to_retrieve_whitelist
-  echo "patch whitelist <<EOF"
+  echo "patch whitelist.txt <<EOF"
   echo "$diff_output"
   echo "EOF"
   to_publish_whitelist
