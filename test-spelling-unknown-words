@@ -5,18 +5,25 @@
 # plus `fchurn` which uses `dn` mostly rolled together.
 set -e
 
-bucket=gs://REPLACE-WITH-YOUR-BUCKET-URL
-project=REPLACE-WITH-YOUR-PROJECT-FOLDER
 spellchecker='spelling-ci'
-wordlist=$bucket/english.words.gz
 w_location='https://raw.githubusercontent.com/jsoref/spelling/master/w'
 temp='.ci-temp'
-
-whitelist_path="$temp/whitelist.words"
-excludelist_path="$temp/excludes"
+whitelist_path="$spellchecker/whitelist.words"
+excludelist_path="$spellchecker/excludes"
 dict="$temp/english.words"
-word_splitter="$temp/spelling-unknown-word-splitter"
-run_output="$temp/unknown.words"
+word_splitter="$spellchecker/spelling-unknown-word-splitter.pl"
+run_output="$spellchecker/unknown.words"
+
+wordlist=$bucket/english.words.gz
+
+if [ -z "$bucket" ]; then
+  echo "$0 requires "'$bucket be set to your bucket (gs://your-project-bucket-path)' >&2
+  exit 1
+fi
+if [ -z "$project" ]; then
+  echo "$0 requires "'$project to be set to your project' >&2
+  exit 1
+fi
 
 if [ ! -e "$dict" ]; then
   mkdir -p $temp
@@ -25,9 +32,11 @@ if [ ! -e "$dict" ]; then
   # https://rpmfind.net/linux/fedora/linux/development/rawhide/Everything/aarch64/os/Packages/w/"
   # "words-.*.noarch.rpm"
   local=$(basename $wordlist)
-  gsutil cp $wordlist $local &&
-  gunzip -c $local > $dict &&
-  rm $local
+  (
+    gsutil cp $wordlist $local &&
+    gunzip -c $local > $dict &&
+    rm $local
+  ) >/dev/null 2>/dev/null
 fi
 
 project_file_path() {
@@ -40,7 +49,7 @@ get_project_files() {
   if [ ! -e "$dest" ]; then
     from=$(project_file_path $file)
     echo "Retrieving cached $file from $from"
-    gsutil cp $from $dest
+    gsutil cp $from $dest >/dev/null 2>/dev/null
   fi
 }
 get_project_files whitelist $whitelist_path
@@ -61,12 +70,14 @@ if [ ! -e "$word_splitter" ]; then
   ls -la "$word_splitter"
 fi
 
-echo "Clean up from previous run"
+if [ -n "$debug" ]; then
+  echo "Clean up from previous run"
+fi
 rm -f "$run_output"
 
-echo "Run w"
+echo "Checking spelling..."
 (git 'ls-files' -z 2> /dev/null || hg locate -0) |\
-  "$spellchecker/exclude" |\
+  "$spellchecker/exclude.pl" |\
   xargs -0 "$word_splitter" |\
   "$word_splitter" |\
   perl -p -n -e 's/ \(.*//' > "$run_output"
@@ -88,45 +99,111 @@ to_publish_whitelist() {
   echo gsutil cp whitelist $(project_file_path whitelist)
 }
 
-echo "Review results"
+if [ -z "$junit" ]; then
+  echo "Review results"
+fi
+
+spelling_header='<?xml version="1.0" encoding="UTF-8"?>
+<testsuite>
+  <testcase name="Spell checking" classname="com.soref.josh.spellchecker" time="1">'
+spelling_warning() {
+  echo '    <failure message="'"$1"'">
+</failure>
+    <system-out><![CDATA['"$2"']]></system-out>
+    <system-err><![CDATA['"$3"']]></system-err>'
+}
+new_words() {
+  echo "$1" | perl -ne 'next unless s/^\+//;print'
+}
+spelling_footer='  </testcase>
+</testsuite>'
+
+quit() {
+  if [ -n "$junit" ]; then
+    exit
+  fi
+  exit $1
+}
+
 if [ ! -e "$whitelist_path" ]; then
-  echo "No preexisting $whitelist_path file."
-  printDetails
-  echo 'cat > '"$whitelist_path"' <<EOF=EOF'
-  cat "$run_output"
-  echo EOF=EOF
-  to_publish_whitelist
-  exit 2
+  title="No preexisting $whitelist_path file"
+  instructions=$(
+    echo 'cat > '"$whitelist_path"' <<EOF=EOF'
+    cat "$run_output"
+    echo EOF=EOF
+    to_publish_whitelist
+  )
+  if [ -z "$junit" ]; then
+    echo "$title."
+    printDetails
+    echo "$instructions"
+  else
+    (
+      echo "$spelling_header"
+      spelling_warning "$title" "$run_output" "$instructions"
+      echo "$spelling_footer"
+    ) > "$junit"
+  fi
+  quit 2
 fi
 
 diff_output=$(diff -U1 "$whitelist_path" "$run_output" |grep -v "$spellchecker" || true)
 
 if [ -z "$diff_output" ]; then
-  echo "No new words with misspellings found."
-  exit 0
+  if [ -z "$junit" ]; then
+    echo "No new words with misspellings found."
+  else
+    (
+      echo "$spelling_header"
+      echo "$spelling_footer"
+    ) > "$junit"
+  fi
+  quit 0
 fi
 
 new_output=$(diff -i -U0 "$whitelist_path" "$run_output" |grep -v "$spellchecker" |\
   perl -n -w -e 'next unless /^\+/; next if /^\+{3} /; s/^.//; print;')
 if [ -z "$new_output" ]; then
-  echo "There are now fewer misspellings than before."
-  echo "$whitelist_path could be updated:"
-  echo ''
+  title='There are now fewer misspellings than before'
+  instructions=$(
+    to_retrieve_whitelist
+    echo "patch whitelist <<EOF"
+    echo "$diff_output"
+    echo "EOF"
+    to_publish_whitelist
+  )
+  if [ -z "$junit" ]; then
+    echo "$title."
+    echo "$whitelist_path could be updated:"
+    echo ''
+    echo "$instructions"
+  else
+    (
+      echo "$spelling_header"
+      spelling_warning "$title" "$(new_words "$diff_output")" "$instructions"
+      echo "$spelling_footer"
+    ) > "$junit"
+  fi
+  quit
+fi
+title='New misspellings found, please review'
+instructions=$(
   to_retrieve_whitelist
   echo "patch whitelist <<EOF"
   echo "$diff_output"
   echo "EOF"
   to_publish_whitelist
-  sleep 5
-  exit 1
+)
+if [ -z "$junit" ]; then
+  echo "$title:"
+  echo "$new_output"
+  printDetails
+  echo "$instructions"
+else
+  (
+    echo "$spelling_header"
+    spelling_warning "$title" "$new_output" "$instructions"
+    echo "$spelling_footer"
+  ) > "$junit"
 fi
-echo "New misspellings found, please review:"
-echo "$new_output"
-printDetails
-to_retrieve_whitelist
-echo "patch whitelist <<EOF"
-echo "$diff_output"
-echo "EOF"
-to_publish_whitelist
-sleep 5
-exit 1
+quit
