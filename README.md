@@ -117,11 +117,18 @@ gsutil cp ... gs://...
 
 ```Jenkinsfile
 stage("Spelling") {
+    withCredentials([file(credentialsId: "spelling-bucket-credentials", variable: 'GOOGLE_APPLICATION_CREDENTIALS')]) {
+        sh label: "Activate Service Account", script: "gcloud auth activate-service-account $SERVICE_ACCOUNT --key-file $GOOGLE_APPLICATION_CREDENTIALS"
+    }
     steps {
         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-            sh 'spelling-ci/test-spelling-unknown-words'
+            sh 'bucket=gs://your-bucket-url project=your-project junit=.ci-temp/spelling.xml spelling-ci/test-spelling-unknown-words'
+        }
+    }
+    post {
+        always {
+            junit allowEmptyResults: true, testResults: '.ci-temp/spelling.xml'
         }
     }
 }
-
 ```
