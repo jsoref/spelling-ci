@@ -5,6 +5,10 @@
 # plus `fchurn` which uses `dn` mostly rolled together.
 set -e
 
+now() {
+  date +'%s%N'
+}
+start=$(now)
 spellchecker='spelling-ci'
 w_location='https://raw.githubusercontent.com/jsoref/spelling/master/w'
 temp='.ci-temp'
@@ -97,16 +101,45 @@ to_publish_whitelist() {
 
 if [ -z "$junit" ]; then
   echo "Review results"
+else
+  elapsed=$(echo $(( $(now) - $start)) | perl -pne 's/(\d{9})$/\.$1/')
 fi
 
 spelling_header='<?xml version="1.0" encoding="UTF-8"?>
 <testsuite>
-  <testcase name="Spell checking" classname="com.soref.josh.spellchecker" time="1">'
+  <testcase name="Spell checking" classname="com.soref.josh.spellchecker" time="'$elapsed'">'
 spelling_warning() {
-  echo '    <failure message="'"$1"'">
-</failure>
-    <system-out><![CDATA['"$2"']]></system-out>
-    <system-err><![CDATA['"$3"']]></system-err>'
+  echo "$spelling_header"
+  echo "    <failure message=\"$1\">
+</failure>"
+  spelling_body "$2" "$3"
+  echo "$spelling_footer"
+}
+spelling_info() {
+  echo "$spelling_header"
+  if [ -z "$2" ]; then
+    out="$1"
+  else
+    out="$1
+
+$2"
+  fi
+  spelling_body "$out" "$3"
+  echo "$spelling_footer"
+}
+spelling_body() {
+  err="$2"
+  if [ -z "$err" ]; then
+    out="$1"
+  else
+    out="$1
+
+To accept these changes, run the commands from Standard Error.
+(They can be run anywhere with permissions to update the bucket.)"
+  fi
+echo "
+    <system-out><![CDATA[$out]]></system-out>
+    <system-err><![CDATA[$err]]></system-err>"
 }
 new_words() {
   echo "$1" | perl -ne 'next unless s/^\+//;print'
@@ -135,23 +168,24 @@ if [ ! -e "$whitelist_path" ]; then
     echo "$instructions"
   else
     (
-      echo "$spelling_header"
-      spelling_warning "$title" "$run_output" "$instructions"
-      echo "$spelling_footer"
+      spelling_info "$title" "$run_output" "$instructions"
     ) > "$junit"
   fi
   quit 2
 fi
+sorted_whitelist="$temp/$(basename $whitelist_path)"
+sort -u "$whitelist_path" > "$sorted_whitelist"
+whitelist_path="$sorted_whitelist"
 
-diff_output=$(diff -U1 "$whitelist_path" "$run_output" |grep -v "$spellchecker" || true)
+diff_output=$(diff -U0 "$whitelist_path" "$run_output" |grep -v "$spellchecker" || true)
 
 if [ -z "$diff_output" ]; then
+  title="No new words with misspellings found"
   if [ -z "$junit" ]; then
-    echo "No new words with misspellings found."
+    echo "$title."
   else
     (
-      echo "$spelling_header"
-      echo "$spelling_footer"
+      spelling_info "$title" "There are currently $(wc -l $whitelist_path|sed -e 's/ .*//') whitelisted items." ""
     ) > "$junit"
   fi
   quit 0
@@ -159,14 +193,26 @@ fi
 
 new_output=$(diff -i -U0 "$whitelist_path" "$run_output" |grep -v "$spellchecker" |\
   perl -n -w -e 'next unless /^\+/; next if /^\+{3} /; s/^.//; print;')
+
+make_instructions() {
+  patch_remove=$(echo "$diff_output" | perl -ne 'next unless s/^-([^-])/$1/; print')
+  patch_add=$(echo "$diff_output" | perl -ne 'next unless s/^\+([^+])/$1/; print')
+  to_retrieve_whitelist
+  echo '('
+  if [ -n "$patch_remove" ]; then
+    echo 'egrep -v "$(echo "'"$patch_remove"'" | tr "\n" " " | perl -pne '"'"'s/^/^(/;s/\s$/)\$/;s/\s/|/g'"'"')" whitelist.txt'
+  fi
+  if [ -n "$patch_add" ]; then
+    echo 'echo "$patch_add"'
+  fi
+  echo ') > new_whitelist.txt && mv new_whitelist.txt whitelist.txt'
+  to_publish_whitelist
+}
+
 if [ -z "$new_output" ]; then
   title='There are now fewer misspellings than before'
   instructions=$(
-    to_retrieve_whitelist
-    echo "patch whitelist.txt <<EOF"
-    echo "$diff_output"
-    echo "EOF"
-    to_publish_whitelist
+    make_instructions
   )
   if [ -z "$junit" ]; then
     echo "$title."
@@ -175,20 +221,14 @@ if [ -z "$new_output" ]; then
     echo "$instructions"
   else
     (
-      echo "$spelling_header"
-      spelling_warning "$title" "$(new_words "$diff_output")" "$instructions"
-      echo "$spelling_footer"
+      spelling_info "$title" "$(new_words "$diff_output")" "$instructions"
     ) > "$junit"
   fi
   quit
 fi
 title='New misspellings found, please review'
 instructions=$(
-  to_retrieve_whitelist
-  echo "patch whitelist.txt <<EOF"
-  echo "$diff_output"
-  echo "EOF"
-  to_publish_whitelist
+  make_instructions
 )
 if [ -z "$junit" ]; then
   echo "$title:"
@@ -197,9 +237,7 @@ if [ -z "$junit" ]; then
   echo "$instructions"
 else
   (
-    echo "$spelling_header"
     spelling_warning "$title" "$new_output" "$instructions"
-    echo "$spelling_footer"
   ) > "$junit"
 fi
 quit

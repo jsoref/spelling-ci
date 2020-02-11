@@ -15,6 +15,7 @@ integration testing support templates
 | spellchecker | The directory where the spell checker lives -- this is where `exclude` lives |
 | temp | The directory where the spell checker puts its files |
 | wordlist | the path for your base dictionary (`english.words.txt` in the Input Files section). |
+| junit | path to junit.xml report |
 
 ### Input locations
 
@@ -34,8 +35,15 @@ integration testing support templates
 | `spelling-unknown-word-splitter` | `w` - the word splitter engine itself |
 | `unknown.words.txt` | Words that were not in the dictionary |
 | `whitelist.words.txt` | Project specific acceptable words |
+| `spelling.xml` | JUnit compatible xml test report |
 
 ### Output
+
+#### No misspellings
+```
+No new words with misspellings found
+There are currently 45 whitelisted items.
+```
 
 #### New misspellings found
 ```
@@ -44,21 +52,11 @@ deps
 fchurn
 params
 
-If you are ok with the output of this run, you will need to
+To accept these changes, run the commands from Standard Error.
+(They can be run anywhere with permissions to update the bucket.)
+---
 gsutil cp gs://... ...
-patch ... <<EOF
-@@ -98,2 +98,3 @@
-+fchurn
- fd
-@@ -382,2 +384,3 @@
- pageshadow
-+params
- parsererror
-@@ -541,3 +544,2 @@
- Uf
--ulimit
- unapply
-EOF
+# ... commands to adjust whitelist
 gsutil cp ... gs://...
 ```
 `script returned exit code 1`
@@ -72,12 +70,11 @@ Review results
 There are now fewer misspellings than before.
 .../whitelist.words could be updated:
 
+To accept these changes, run the commands from Standard Error.
+(They can be run anywhere with permissions to update the bucket.)
+---
 gsutil cp gs://... ...
-@@ -541,3 +544,2 @@
- Uf
--ulimit
- unapply
-EOF
+# ... commands to adjust whitelist
 gsutil cp ... gs://...
 ```
 `script returned exit code 1`
@@ -109,6 +106,7 @@ gsutil cp ... gs://...
 * `git` (for `git ls-files`) or `hg` -- to list files to check
 * `gsutil` -- For retrieving settings (most of the files defined in [Other Files](README.md#Other Files)
 * `perl`
+* `sort` -- To allow users to provide an unsorted whitelist
 * [https://raw.githubusercontent.com/jsoref/spelling/master/w](https://raw.githubusercontent.com/jsoref/spelling/master/w) -- as a reminder, if you use this repository as is, you are running code directly from my repository. If that's a problem, you will want to make a local copy of `w` and commit it into your repository.
 * `xargs`
 
@@ -126,7 +124,7 @@ stage("Spelling") {
     }
     post {
         always {
-            junit allowEmptyResults: true, testResults: '.ci-temp/spelling.xml'
+            junit allowEmptyResults: true, keepLongStdio: true, testResults: '.ci-temp/spelling.xml'
         }
     }
 }
